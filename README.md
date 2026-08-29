@@ -200,3 +200,46 @@ se presenta como `0014`, abrí un issue: hace falta capturar sus descriptores.
 
 El quirk se inserta en fuentes del kernel Linux y sigue su licencia,
 **GPL-2.0**. Los scripts de este repositorio, lo mismo.
+
+## Procedencia de los datos
+
+Todo lo que hay en el quirk sale de los **descriptores que el propio aparato
+publica** (`doc/lsusb-sl2.txt`, salida de `lsusb -v`) o de mediciones sobre la
+señal. La frecuencia de 44100 Hz, por ejemplo, se determinó midiendo: el tono
+de referencia de 1 kHz leía 1087 Hz al declarar 48000, y una captura
+cronometrada de 10 s tardaba 10.9 s de reloj real.
+
+Los drivers de Windows y macOS de Rane se consultaron para entender la
+arquitectura del aparato — resultan ser envoltorios finos sobre los endpoints,
+con toda la lógica en espacio de usuario — pero **ningún valor del quirk
+proviene de desensamblarlos**, y esos binarios no se redistribuyen aquí porque
+son propietarios de Rane/inMusic y Serato.
+
+Si querés inspeccionarlos por tu cuenta, están dentro del instalador de
+**Serato Scratch Live 2.5** (descarga gratuita con cuenta gratuita en
+serato.com, en el archivo de versiones antiguas). Los drivers quedan en
+`Serato/Drivers/<SO>/SL2/`, y el paquete ASIO se abre con `innoextract`.
+
+## Otros modelos de la familia
+
+El **SL3** y el **SL4** son de la misma generación y muy probablemente tengan
+la misma estructura: interfaces vendor specific con descriptores UAC2 válidos
+y sin IAD. Adaptar el quirk sería cuestión de cambiar el PID y ajustar
+endpoints y número de canales.
+
+Si tenés uno, abrí un issue con la salida de `lsusb -v -d 1cc5:XXXX` y con el
+resultado de medir la frecuencia real. PIDs conocidos de la familia, sacados
+de los archivos INF de Serato:
+
+| Modelo | USB ID |
+|---|---|
+| Rane SL 1 | `13e5:0001` |
+| Rane MP 4 | `13e5:0002` |
+| Rane TTM 57SL | `13e5:8003` |
+| Rane SL 3 | `1cc5:0003` |
+| Rane Sixty-Eight | `1cc5:0005` |
+| Rane Sixty Two | `1cc5:000a` |
+| Rane SL 4 | `1cc5:0010` |
+| Rane Sixty One | `1cc5:0012` |
+| **Rane SL 2 (modo ASIO)** | **`1cc5:0013`** |
+| Rane SL 2 (modo Scratch Live) | `1cc5:0014` |
