@@ -243,3 +243,11 @@ de los archivos INF de Serato:
 | Rane Sixty One | `1cc5:0012` |
 | **Rane SL 2 (modo ASIO)** | **`1cc5:0013`** |
 | Rane SL 2 (modo Scratch Live) | `1cc5:0014` |
+
+## Envío al kernel
+
+En `patch/` está el mismo quirk en formato de parche para el kernel Linux,
+listo para mandar a la lista. Pasa `checkpatch.pl --strict` sin observaciones.
+
+Si termina aceptándose upstream, este repositorio deja de hacer falta: el
+soporte llega solo con el kernel de cualquier distribución.

@@ -103,7 +103,9 @@ def insert_before(path, anchor, block, what):
     if not hits:
         fail(f"no se encontro el ancla {anchor!r} en {path}. "
              "Puede que la estructura del kernel haya cambiado.")
-    lines[hits[0]:hits[0]] = block.split("\n") + [""]
+    # El bloque ya termina en salto de linea; agregar otro dejaria dos
+    # lineas en blanco seguidas y checkpatch lo marca.
+    lines[hits[0]:hits[0]] = block.split("\n")
     path.write_text("\n".join(lines), encoding="utf-8")
     print(f"  {path.name}: {what} insertado")
 

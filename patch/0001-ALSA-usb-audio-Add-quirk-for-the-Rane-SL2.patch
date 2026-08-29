@@ -1,0 +1,134 @@
+From d0ac5789bc2202ee4236ef17a18d49bd538d22f4 Mon Sep 17 00:00:00 2001
+From: Reinhar <reinhardebian@gmail.com>
+Date: Fri, 28 Aug 2026 22:31:21 -0400
+Subject: [PATCH] ALSA: usb-audio: Add quirk for the Rane SL2
+
+The Rane SL2 is a 4-in/4-out DVS interface. Its class-specific descriptors
+are valid UAC2 and bInterfaceProtocol is UAC_VERSION_2, but the interface
+class is reported as vendor specific and the interface association
+descriptor is missing, so the standard probe path rejects the device with:
+
+  usb 1-6: Audio class v2/v3 interfaces need an interface association
+
+The device also stalls both UAC2_CS_RANGE and UAC2_CS_CUR for the sample
+frequency control, so the rate can neither be discovered nor set. It runs
+at a fixed 44.1 kHz, measured two ways: the 1 kHz timecode reference tone
+on a Serato control record reads back at 1087 Hz when the stream is
+declared as 48 kHz, a ratio of 1.087 matching 48000/44100, and a timed
+capture of 480000 frames takes 10.9 s of wall clock, i.e. 44038 Hz.
+
+Add a composite quirk declaring interface 0 as the mixer and interfaces 1
+and 2 as fixed audio formats, since the rates cannot be parsed from the
+device. Pair it with QUIRK_FLAG_FIXED_RATE so that init_sample_rate()
+skips the clock request that would otherwise fail and abort hw_params.
+
+Use USB_DEVICE_VENDOR_SPEC() so that only the vendor specific interfaces
+are matched; interface 3 is HID and is left to usbhid.
+
+Tested on a Rane SL2 (bcdDevice 1.00, iSerial SL2.01.00) doing timecode
+vinyl control in Mixxx. Capture and playback both run without xruns down
+to a 192 frame buffer, about 4.3 ms.
+
+Signed-off-by: Reinhar <reinhardebian@gmail.com>
+---
+ sound/usb/quirks-table.h | 71 ++++++++++++++++++++++++++++++++++++++++
+ sound/usb/quirks.c       |  2 ++
+ 2 files changed, 73 insertions(+)
+
+diff --git a/sound/usb/quirks-table.h b/sound/usb/quirks-table.h
+index 71444c2..e605f45 100644
+--- a/sound/usb/quirks-table.h
++++ b/sound/usb/quirks-table.h
+@@ -4037,5 +4037,76 @@ QUIRK_RME_DIGIFACE(0x3fa0),
+ #undef QUIRK_AF16RIG_CLOCK
+ #undef QUIRK_AF16RIG
+ 
++/*
++ * Rane SL2 (Serato DVS interface).
++ *
++ * The class-specific descriptors are valid UAC2 and bInterfaceProtocol is
++ * UAC_VERSION_2, but the interface class is reported as vendor specific and
++ * the interface association descriptor is missing, so the standard probe path
++ * bails out with "Audio class v2/v3 interfaces need an interface association".
++ *
++ * The device answers neither UAC2_CS_RANGE nor UAC2_CS_CUR for the sample
++ * frequency control (it stalls both), so the rate can neither be discovered
++ * nor set. The hardware runs at a fixed 44.1 kHz, measured two ways: the
++ * 1 kHz Serato timecode reference reads back at 1087 Hz when the stream is
++ * declared as 48 kHz (ratio 1.087), and a timed 10 s capture takes 10.9 s of
++ * wall clock (44038 Hz). It is declared here as a single fixed rate and
++ * paired with QUIRK_FLAG_FIXED_RATE so that the endpoint setup skips the
++ * clock request that would otherwise fail and abort hw_params.
++ *
++ * Format is 4 channels of 24 bits carried in 4 byte subslots.
++ *
++ * Interface 3 is HID and is left to usbhid by matching only the vendor
++ * specific interfaces.
++ */
++{
++	USB_DEVICE_VENDOR_SPEC(0x1cc5, 0x0013),
++	QUIRK_DRIVER_INFO {
++		QUIRK_DATA_COMPOSITE {
++			{ QUIRK_DATA_STANDARD_MIXER(0) },
++			{
++				QUIRK_DATA_AUDIOFORMAT(1) {
++					.formats = SNDRV_PCM_FMTBIT_S32_LE,
++					.channels = 4,
++					.fmt_bits = 24,
++					.iface = 1,
++					.altsetting = 1,
++					.altset_idx = 1,
++					.endpoint = 0x06,
++					.ep_attr = USB_ENDPOINT_XFER_ISOC |
++						   USB_ENDPOINT_SYNC_ASYNC,
++					.clock = 5,
++					.rates = SNDRV_PCM_RATE_44100,
++					.rate_min = 44100,
++					.rate_max = 44100,
++					.nr_rates = 1,
++					.rate_table = (unsigned int[]) { 44100 },
++				},
++			},
++			{
++				QUIRK_DATA_AUDIOFORMAT(2) {
++					.formats = SNDRV_PCM_FMTBIT_S32_LE,
++					.channels = 4,
++					.fmt_bits = 24,
++					.iface = 2,
++					.altsetting = 1,
++					.altset_idx = 1,
++					.endpoint = 0x82,
++					.ep_attr = USB_ENDPOINT_XFER_ISOC |
++						   USB_ENDPOINT_SYNC_ASYNC |
++						   USB_ENDPOINT_USAGE_IMPLICIT_FB,
++					.clock = 5,
++					.rates = SNDRV_PCM_RATE_44100,
++					.rate_min = 44100,
++					.rate_max = 44100,
++					.nr_rates = 1,
++					.rate_table = (unsigned int[]) { 44100 },
++				},
++			},
++			QUIRK_COMPOSITE_END
++		}
++	}
++},
++
+ #undef USB_DEVICE_VENDOR_SPEC
+ #undef USB_AUDIO_DEVICE
+diff --git a/sound/usb/quirks.c b/sound/usb/quirks.c
+index 4d2957e..5cb2719 100644
+--- a/sound/usb/quirks.c
++++ b/sound/usb/quirks.c
+@@ -2199,6 +2199,8 @@ struct usb_audio_quirk_flags_table {
+ 	DEVICE_STRING_FLG(vid, 0, _manufacturer, NULL, _flags)
+ 
+ static const struct usb_audio_quirk_flags_table quirk_flags_table[] = {
++	DEVICE_FLG(0x1cc5, 0x0013, /* Rane SL2 */
++		   QUIRK_FLAG_FIXED_RATE),
+ 	/* Device and string descriptor matches */
+ 	DEVICE_STRING_FLG(0x05ac, 0x110b, /* VID conflicts with Apple */
+ 			  "JKY Technology", NULL, /* Q2A */
+-- 
+2.55.0
+
