@@ -22,7 +22,8 @@ uso: sudo ./install.sh [opciones]
 
   --kernel VER   compilar para esta version de kernel (por defecto: $(uname -r))
   --tag vX.Y.Z   tag de kernel.org del que bajar las fuentes
-                 (por defecto se deduce de la version del kernel)
+                 (por defecto se deduce de la version del kernel; sirve
+                 cualquier version de la misma serie X.Y)
   -h, --help     esta ayuda
 EOF
 }
@@ -64,29 +65,44 @@ else
 	echo "  compilador  : gcc"
 fi
 
-if [[ -z $TAG ]]; then
+# kernel.org etiqueta las releases .0 como vX.Y, NO vX.Y.0, mientras que varias
+# distros (Ubuntu, Debian) nombran ese mismo kernel 7.0.0-14-generic. Por eso no
+# alcanza con deducir un tag: se prueban los candidatos contra cgit y se usa el
+# primero que exista de verdad.
+if [[ -n $TAG ]]; then
+	[[ $TAG == v* ]] || TAG="v$TAG"   # aceptar "7.0" ademas de "v7.0"
+	candidates=("$TAG")
+else
 	base=$(printf '%s' "$KVER" | grep -oE '^[0-9]+\.[0-9]+(\.[0-9]+)?') \
 		|| die "no pude deducir la version base de '$KVER'; pasala con --tag vX.Y.Z"
-	TAG="v$base"
+	candidates=("v$base")
+	[[ $base == *.0 ]] && candidates+=("v${base%.0}")
 fi
-echo "  fuentes de  : $TAG"
 
-step "Bajando sound/usb de $TAG"
+step "Bajando sound/usb"
 rm -rf "$SRC"; mkdir -p "$SRC"
-listing=$(curl -fsSL --retry 3 "$CGIT/tree/sound/usb?h=$TAG") \
-	|| die "no pude listar sound/usb de $TAG.
-  Si tu kernel no corresponde a un tag publicado, pasa uno cercano con --tag."
+listing=""
+for TAG in "${candidates[@]}"; do
+	echo "  probando tag $TAG"
+	listing=$(curl -fsL --retry 3 "$CGIT/tree/sound/usb?h=$TAG") && break
+	listing=""
+done
+[[ -n $listing ]] || die "ningun tag de kernel.org coincide (probe: ${candidates[*]}).
+  Busca el mas cercano en
+    https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/refs/tags
+  y pasalo con --tag. Sirve cualquier version de la misma serie X.Y."
+echo "  fuentes de  : $TAG"
 mapfile -t files < <(printf '%s' "$listing" \
 	| grep -oE "/tree/sound/usb/[A-Za-z0-9_.-]+\.(c|h)\?h=" \
 	| sed 's|/tree/sound/usb/||; s|?h=||' | sort -u)
 [[ ${#files[@]} -gt 10 ]] || die "el listado de sound/usb vino vacio o incompleto"
 
 for f in "${files[@]}"; do
-	curl -fsSL --retry 3 "$CGIT/plain/sound/usb/$f?h=$TAG" -o "$SRC/$f" \
+	curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "$CGIT/plain/sound/usb/$f?h=$TAG" -o "$SRC/$f" \
 		|| die "fallo la descarga de $f"
 	[[ -s $SRC/$f ]] || die "$f vino vacio"
 done
-curl -fsSL --retry 3 "$CGIT/plain/sound/usb/Makefile?h=$TAG" -o "$SRC/Makefile.upstream" \
+curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "$CGIT/plain/sound/usb/Makefile?h=$TAG" -o "$SRC/Makefile.upstream" \
 	|| die "fallo la descarga del Makefile"
 echo "  ${#files[@]} archivos"
 

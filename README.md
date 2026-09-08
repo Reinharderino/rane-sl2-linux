@@ -52,6 +52,35 @@ sudo ./uninstall.sh
 
 El `snd-usb-audio` original queda archivado por DKMS y vuelve intacto.
 
+### Si no encuentra las fuentes de tu kernel
+
+Las distros derivadas de Debian nombran el kernel `7.0.0-14-generic` aunque
+kernel.org etiqueta esa release como **`v7.0`**, sin el tercer número: los tags
+`vX.Y.0` no existen. El instalador ya prueba las dos formas, así que esto
+debería resolverse solo.
+
+Si aún así ningún tag coincide (kernel de desarrollo, `-rc`, o parcheado por la
+distro), pasá uno a mano. **Sirve cualquier versión de la misma serie X.Y**, no
+hace falta la exacta:
+
+```bash
+sudo ./install.sh --tag v7.0
+```
+
+Los tags publicados están en
+<https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/refs/tags>.
+
+### Si aparecen errores 503 durante la descarga
+
+```
+curl: (22) The requested URL returned error: 503
+```
+
+Es limitación de tasa de git.kernel.org, no una falla. `curl` reintenta y sigue;
+si un archivo no bajara de verdad el instalador aborta ahí mismo. Mientras el
+paso termine con la cuenta de archivos (`46 archivos`, alrededor de 40 según la
+versión), la descarga quedó completa.
+
 ### Si tu distro compila el kernel con clang
 
 CachyOS y algunas otras lo hacen. El instalador lo detecta leyendo
@@ -79,17 +108,38 @@ No es un aparato roto ni un problema de cable: el SL2 tarda más en despertar
 que lo que el host espera antes de rendirse. Conectado desde el arranque
 enumera siempre y a la primera.
 
-Si necesitás conectarlo con la máquina encendida, esperá unos diez segundos
-después de enchufarlo y forzá un reinicio del puerto (ajustá la ruta a tu
-puerto, sale del `dmesg`):
+Desenchufarlo nunca da problemas. El que falla es el camino de vuelta.
+
+### Conectarlo con la máquina encendida
+
+Se puede, pero no a lo bruto. Enchufá el SL2, esperá unos diez segundos a que
+termine de despertar, y forzá un reinicio del puerto:
 
 ```bash
-P=/sys/devices/pci0000:00/0000:00:14.0/usb1/1-0:1.0/usb1-port6
+sudo ./sl2-hotplug-reset
+```
+
+El script saca el puerto del `dmesg`, lo reinicia y espera a que el aparato
+aparezca. Si el puerto ya lo sabés, se lo pasás a mano:
+
+```bash
+sudo ./sl2-hotplug-reset 1-6
+```
+
+A mano es el mismo par de escrituras, ajustando la ruta a tu puerto:
+
+```bash
+P=/sys/bus/usb/devices/usb1/1-0:1.0/usb1-port6
 echo 1 | sudo tee $P/disable >/dev/null
 echo 0 | sudo tee $P/disable >/dev/null
 ```
 
 Para confirmar que enumeró: `lsusb | grep 1cc5`.
+
+Dos límites conocidos de esto: está medido sobre una sola unidad en una sola
+máquina, así que no sabemos si todos los SL2 tienen el mismo tiempo de
+arranque, y no está probado qué pasa al suspender y reanudar. Si el tuyo se
+comporta distinto en cualquiera de los dos casos, abrí un issue: es dato útil.
 
 ## Conexionado
 
@@ -106,6 +156,48 @@ en phono le sumás otro previo de 40 dB y satura.
 Si tu tornamesa tiene previo interno y la dejás en LINE, entonces la entrada
 del Rane va en **CD**, no en PHONO. Lo que no puede pasar es mezclar los dos
 criterios: dos previos en cadena saturan, y ninguno deja la señal 40 dB abajo.
+
+## Que PipeWire no toque la placa
+
+PipeWire toma el SL2 como una tarjeta de sonido más, mientras Mixxx la abre
+como ALSA crudo. Dos dueños para un mismo aparato. Suele parecer que funciona,
+porque PipeWire suspende los nodos ociosos y suelta la placa, hasta que algo
+rutea audio ahí en medio de un set.
+
+Como el SL2 lo vas a usar solamente desde Mixxx por ALSA, lo más limpio es que
+WirePlumber lo ignore. Buscá el identificador del aparato:
+
+```bash
+wpctl status | grep -i 'Rane SL 2'
+wpctl inspect <id del device> | grep device.name
+```
+
+Y con ese valor exacto, creá
+`~/.config/wireplumber/wireplumber.conf.d/51-rane-sl2.conf`:
+
+```
+monitor.alsa.rules = [
+  {
+    matches = [{ device.name = "alsa_card.usb-Rane_Corporation_Rane_SL_2_SL2.01.00-00" }]
+    actions = {
+      update-props = {
+        device.disabled = true
+      }
+    }
+  }
+]
+```
+
+```bash
+systemctl --user restart wireplumber
+```
+
+Después el SL2 no aparece más en `wpctl status`: ni device, ni sink, ni source.
+Mixxx lo sigue abriendo igual que antes, porque nunca pasó por PipeWire. Para
+volver atrás, borrá el archivo y reiniciá wireplumber.
+
+El efecto buscado es justamente ese: el SL2 deja de existir para el audio del
+sistema. Ningún navegador ni notificación puede caerle encima.
 
 ## Configuración de Mixxx
 
@@ -169,6 +261,7 @@ Estos cuatro cubren casi todo, y son difíciles de distinguir a ojo:
 | El track va en reversa | Canales invertidos, o señal tan pobre que el sentido no se resuelve. Antes de cruzar cables, revisá los switches PHONO. |
 | El track salta | Desfase de reloj. Si el tono de referencia lee ~1087 Hz en vez de 1000, el driver está declarando 48000 mientras el hardware corre a 44100: el módulo con el quirk no está activo. |
 | Solo zumbido grave, casi sin nivel | Tornamesa en LINE con el Rane en PHONO, o la púa levantada. |
+| Por la salida sale el timecode y no la música | El SL2 pasa la entrada a la salida mientras no tenga un stream de reproducción abierto: el ADC y el thru dependen de que el lado de salida esté corriendo. Si en Mixxx solo asignaste las entradas de control de vinilo y dejaste `Plato 1` y `Plato 2` sin asignar, el aparato nunca sale de ese modo. Asigná las salidas (canales 1-2 y 3-4) y revisá que el botón **PASS** del plato esté apagado. |
 
 ## Detalles técnicos
 
