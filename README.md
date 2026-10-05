@@ -1,132 +1,143 @@
-# Rane SL2 en Linux
+# Rane SL2 on Linux
 
-Soporte nativo para la interfaz DVS **Rane SL2** (`1cc5:0013`) en Linux, para
-usarla con [Mixxx](https://mixxx.org) u otro software que hable ALSA.
+Native support for the **Rane SL2** DVS interface (`1cc5:0013`) on Linux, for
+use with [Mixxx](https://mixxx.org) or any other software that speaks ALSA.
 
-El SL2 salió en 2009, Serato lo discontinuó, y sus drivers no funcionan en
-macOS moderno ni cómodamente en Windows 10/11. El hardware está perfecto: son
-cuatro entradas y cuatro salidas de 24 bits con previos de phono. Esto lo
-devuelve a la vida.
+The SL2 came out in 2009, Serato discontinued it, and its drivers don't work on
+modern macOS nor comfortably on Windows 10/11. The hardware is perfectly fine:
+four 24-bit inputs and four outputs with phono preamps. This brings it back to
+life.
 
-## Qué es esto en realidad
+## What this actually is
 
-**No es un driver nuevo.** Al mirar los descriptores USB del aparato resulta
-que el SL2 ya es un dispositivo **USB Audio Class 2.0** casi de manual: sus
-descriptores de clase son válidos y declara `bInterfaceProtocol =
-UAC_VERSION_2`. Solo tiene dos rarezas que hacen que el kernel lo rechace:
+**It's not a new driver.** Looking at the device's USB descriptors, it turns
+out the SL2 is already an almost textbook **USB Audio Class 2.0** device: its
+class descriptors are valid and it declares `bInterfaceProtocol =
+UAC_VERSION_2`. It has only two quirks that make the kernel reject it:
 
-1. Reporta clase de interfaz *vendor specific* (`0xFF`) en vez de audio.
-2. Le falta el *interface association descriptor*, así que el kernel corta con
-   `Audio class v2/v3 interfaces need an interface association`.
+1. It reports a *vendor specific* interface class (`0xFF`) instead of audio.
+2. It lacks the *interface association descriptor*, so the kernel bails out
+   with `Audio class v2/v3 interfaces need an interface association`.
 
-Además no responde a los pedidos estándar de frecuencia de muestreo (los
-rechaza con *stall*), así que la tasa no se puede descubrir ni fijar: corre
-siempre a **44100 Hz**.
+On top of that it doesn't answer the standard sample rate requests (it rejects
+them with a *stall*), so the rate can't be discovered or set: it always runs at
+**44100 Hz**.
 
-Todo eso se resuelve con una entrada en la tabla de quirks de ALSA. Son unas
-setenta líneas. El resto de este repositorio es el andamiaje para compilarla
-en cualquier kernel y un diagnóstico para el hardware.
+All of this is solved with one entry in the ALSA quirks table. It's about
+seventy lines. The rest of this repository is the scaffolding to build it for
+any kernel, plus a diagnostic tool for the hardware.
 
-## Instalación
+## Installation
 
-Requisitos: headers de tu kernel, `dkms`, `curl`, `make`, `python3` y
+Requirements: your kernel's headers, `dkms`, `curl`, `make`, `python3` and
 `alsa-utils`.
 
 ```bash
-git clone <este-repo> && cd rane-sl2-linux
+git clone <this-repo> && cd rane-sl2-linux
 sudo ./install.sh
 ```
 
-El instalador detecta tu kernel, **baja de kernel.org las fuentes de
-`sound/usb` que corresponden a esa versión**, les aplica el quirk y compila el
-módulo con DKMS. Se baja solo ese directorio, más o menos 1.4 MB, no el
-tarball completo del kernel.
+The installer detects your kernel, **downloads from kernel.org the `sound/usb`
+sources matching that version**, applies the quirk and builds the module with
+DKMS. Only that directory is downloaded, roughly 1.4 MB, not the full kernel
+tarball.
 
-DKMS lo recompila solo en cada actualización de kernel.
+DKMS rebuilds it automatically on every kernel update **within the same X.Y
+series** (from 7.2.8 to 7.2.9, for example). The downloaded sources don't
+build against another series, because ALSA's internal API changes, so DKMS
+skips those kernels instead of failing: an older `-lts` installed alongside
+won't break your updates. When you move to a new series (7.2 → 7.3), run
+`sudo ./install.sh` again; until then that kernel uses the stock
+`snd-usb-audio`, without the quirk.
 
-Para volver atrás en cualquier momento:
+To roll back at any time:
 
 ```bash
 sudo ./uninstall.sh
 ```
 
-El `snd-usb-audio` original queda archivado por DKMS y vuelve intacto.
+DKMS archives the original `snd-usb-audio` and restores it untouched.
 
-### Si no encuentra las fuentes de tu kernel
+### If it can't find your kernel's sources
 
-Las distros derivadas de Debian nombran el kernel `7.0.0-14-generic` aunque
-kernel.org etiqueta esa release como **`v7.0`**, sin el tercer número: los tags
-`vX.Y.0` no existen. El instalador ya prueba las dos formas, así que esto
-debería resolverse solo.
+Debian-based distros name the kernel `7.0.0-14-generic` even though kernel.org
+tags that release as **`v7.0`**, without the third number: `vX.Y.0` tags don't
+exist. The installer already tries both forms, so this should sort itself out.
 
-Si aún así ningún tag coincide (kernel de desarrollo, `-rc`, o parcheado por la
-distro), pasá uno a mano. **Sirve cualquier versión de la misma serie X.Y**, no
-hace falta la exacta:
+If no tag matches anyway (development kernel, `-rc`, or patched by the
+distro), pass one by hand. **Any version from the same X.Y series works**, it
+doesn't need to be the exact one:
 
 ```bash
 sudo ./install.sh --tag v7.0
 ```
 
-Los tags publicados están en
+Published tags are at
 <https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/refs/tags>.
 
-### Si aparecen errores 503 durante la descarga
+### If 503 errors show up during the download
 
 ```
 curl: (22) The requested URL returned error: 503
 ```
 
-Es limitación de tasa de git.kernel.org, no una falla. `curl` reintenta y sigue;
-si un archivo no bajara de verdad el instalador aborta ahí mismo. Mientras el
-paso termine con la cuenta de archivos (`46 archivos`, alrededor de 40 según la
-versión), la descarga quedó completa.
+That's git.kernel.org rate limiting, not a failure. `curl` retries and moves
+on; if a file truly fails to download, the installer aborts right there. As
+long as the step ends with the file count (`46 files`, around 40 depending
+on the version), the download is complete.
 
-### Si tu distro compila el kernel con clang
+### If your distro builds the kernel with clang
 
-CachyOS y algunas otras lo hacen. El instalador lo detecta leyendo
-`/proc/version` y agrega `LLVM=1`. Si no lo hiciera, la compilación fallaría
-con `unrecognized command-line option '-mstack-alignment=8'`.
+CachyOS and a few others do. The module is built with the same compiler as its
+kernel: the Makefile reads `CONFIG_CC_IS_CLANG` from the headers' `.config` on
+every build and adds `LLVM=1` when needed. It doesn't depend on the distro,
+and it works even with kernels of both kinds installed (on CachyOS,
+`linux-cachyos` uses clang while `linux-zen`/`linux-lts` use gcc). With the
+wrong compiler the build fails with
+`unrecognized command-line option '-mstack-alignment=8'` or
+`clang: error: unknown argument`.
 
 ### Secure Boot
 
-DKMS firma el módulo con tu clave MOK si la tenés configurada. Si usás Secure
-Boot y el módulo no carga, hay que inscribir esa clave (`mokutil --import`).
+DKMS signs the module with your MOK key if you have one set up. If you use
+Secure Boot and the module doesn't load, you need to enroll that key
+(`mokutil --import`).
 
-## El equipo no lo detecta
+## The computer doesn't detect it
 
-**Conectá el SL2 antes de encender la máquina.**
+**Plug in the SL2 before turning on the machine.**
 
-Muchos controladores xHCI no logran enumerarlo en caliente. El síntoma es el
-LED parpadeando cinco veces y apagándose, y en `dmesg`:
+Many xHCI controllers fail to enumerate it when hot-plugged. The symptom is the
+LED blinking five times and turning off, and in `dmesg`:
 
 ```
 usb 1-6: device descriptor read/64, error -110
 usb usb1-port6: unable to enumerate USB device
 ```
 
-No es un aparato roto ni un problema de cable: el SL2 tarda más en despertar
-que lo que el host espera antes de rendirse. Conectado desde el arranque
-enumera siempre y a la primera.
+It's not a broken unit or a bad cable: the SL2 takes longer to wake up than
+the host is willing to wait before giving up. Connected from boot, it always
+enumerates on the first try.
 
-Desenchufarlo nunca da problemas. El que falla es el camino de vuelta.
+Unplugging it never causes problems. It's the way back that fails.
 
-### Conectarlo con la máquina encendida
+### Plugging it in with the machine running
 
-Se puede, pero no a lo bruto. Enchufá el SL2, esperá unos diez segundos a que
-termine de despertar, y forzá un reinicio del puerto:
+It can be done, just not by brute force. Plug in the SL2, wait about ten
+seconds for it to finish waking up, and force a port reset:
 
 ```bash
 sudo ./sl2-hotplug-reset
 ```
 
-El script saca el puerto del `dmesg`, lo reinicia y espera a que el aparato
-aparezca. Si el puerto ya lo sabés, se lo pasás a mano:
+The script picks the port out of `dmesg`, resets it and waits for the device to
+show up. If you already know the port, pass it by hand:
 
 ```bash
 sudo ./sl2-hotplug-reset 1-6
 ```
 
-A mano es el mismo par de escrituras, ajustando la ruta a tu puerto:
+Manually it's the same pair of writes, adjusting the path to your port:
 
 ```bash
 P=/sys/bus/usb/devices/usb1/1-0:1.0/usb1-port6
@@ -134,45 +145,45 @@ echo 1 | sudo tee $P/disable >/dev/null
 echo 0 | sudo tee $P/disable >/dev/null
 ```
 
-Para confirmar que enumeró: `lsusb | grep 1cc5`.
+To confirm it enumerated: `lsusb | grep 1cc5`.
 
-Dos límites conocidos de esto: está medido sobre una sola unidad en una sola
-máquina, así que no sabemos si todos los SL2 tienen el mismo tiempo de
-arranque, y no está probado qué pasa al suspender y reanudar. Si el tuyo se
-comporta distinto en cualquiera de los dos casos, abrí un issue: es dato útil.
+Two known limits here: it's measured on a single unit in a single machine, so
+we don't know whether every SL2 has the same boot time, and suspend/resume
+hasn't been tested. If yours behaves differently in either case, open an
+issue: that's useful data.
 
-## Conexionado
+## Wiring
 
-| Elemento | Posición |
+| Item | Setting |
 |---|---|
-| Tornamesa | **PHONO** |
-| Entrada del Rane | **PHONO** |
-| Canal del mixer | **LINE** |
-| Cables RCA | derechos: izquierda con izquierda |
+| Turntable | **PHONO** |
+| Rane input | **PHONO** |
+| Mixer channel | **LINE** |
+| RCA cables | straight: left to left |
 
-El SL2 entrega **nivel de línea** por sus salidas; si ponés el canal del mixer
-en phono le sumás otro previo de 40 dB y satura.
+The SL2 puts out **line level**; if you set the mixer channel to phono you add
+another 40 dB preamp and it clips.
 
-Si tu tornamesa tiene previo interno y la dejás en LINE, entonces la entrada
-del Rane va en **CD**, no en PHONO. Lo que no puede pasar es mezclar los dos
-criterios: dos previos en cadena saturan, y ninguno deja la señal 40 dB abajo.
+If your turntable has a built-in preamp and you leave it on LINE, then the
+Rane input goes on **CD**, not PHONO. What must not happen is mixing both
+approaches: two preamps in a chain clip, and none leaves the signal 40 dB low.
 
-## Que PipeWire no toque la placa
+## Keep PipeWire off the device
 
-PipeWire toma el SL2 como una tarjeta de sonido más, mientras Mixxx la abre
-como ALSA crudo. Dos dueños para un mismo aparato. Suele parecer que funciona,
-porque PipeWire suspende los nodos ociosos y suelta la placa, hasta que algo
-rutea audio ahí en medio de un set.
+PipeWire grabs the SL2 as just another sound card, while Mixxx opens it as raw
+ALSA. Two owners for the same device. It usually looks like it works, because
+PipeWire suspends idle nodes and releases the card, until something routes
+audio there in the middle of a set.
 
-Como el SL2 lo vas a usar solamente desde Mixxx por ALSA, lo más limpio es que
-WirePlumber lo ignore. Buscá el identificador del aparato:
+Since you'll use the SL2 only from Mixxx through ALSA, the cleanest option is
+to have WirePlumber ignore it. Find the device identifier:
 
 ```bash
 wpctl status | grep -i 'Rane SL 2'
-wpctl inspect <id del device> | grep device.name
+wpctl inspect <device id> | grep device.name
 ```
 
-Y con ese valor exacto, creá
+And with that exact value, create
 `~/.config/wireplumber/wireplumber.conf.d/51-rane-sl2.conf`:
 
 ```
@@ -192,139 +203,141 @@ monitor.alsa.rules = [
 systemctl --user restart wireplumber
 ```
 
-Después el SL2 no aparece más en `wpctl status`: ni device, ni sink, ni source.
-Mixxx lo sigue abriendo igual que antes, porque nunca pasó por PipeWire. Para
-volver atrás, borrá el archivo y reiniciá wireplumber.
+After that the SL2 no longer shows up in `wpctl status`: no device, sink or
+source. Mixxx keeps opening it as before, because it never went through
+PipeWire. To roll back, delete the file and restart wireplumber.
 
-El efecto buscado es justamente ese: el SL2 deja de existir para el audio del
-sistema. Ningún navegador ni notificación puede caerle encima.
+That's exactly the intended effect: the SL2 stops existing for system audio.
+No browser or notification can land on it.
 
-## Configuración de Mixxx
+## Mixxx configuration
 
-En **Preferencias → Hardware de sonido**:
+In **Preferences → Sound Hardware**:
 
-- API de sonido: **ALSA**
-- Frecuencia de muestreo: **44100 Hz** — obligatorio. Con otra el dispositivo
-  no abre, porque el driver declara 44100 y nada más.
-- Buffer: empezá en 21 ms y bajá después
+- Sound API: **ALSA**
+- Sample rate: **44100 Hz** — mandatory. With any other rate the device won't
+  open, because the driver declares 44100 and nothing else.
+- Audio buffer: start at 21 ms and go down later
 
-Salidas, con **mixer externo** (lo habitual con un SL2):
+Outputs, with an **external mixer** (the usual setup with an SL2):
 
-- `Plato 1` → Rane SL 2, canales **1-2**
-- `Plato 2` → Rane SL 2, canales **3-4**
-- `Principal`, `Auriculares` y `Cabina` sin asignar
+- `Deck 1` → Rane SL 2, channels **1-2**
+- `Deck 2` → Rane SL 2, channels **3-4**
+- `Main`, `Headphones` and `Booth` unassigned
 
-El mixer hace la mezcla y el cue de auriculares. Dejá los faders y EQ de Mixxx
-en posición neutra: las salidas de plato son post-fader y si no vas a estar
-peleando contra dos controles para lo mismo.
+The mixer does the mixing and the headphone cue. Leave Mixxx's faders and EQ
+in neutral position: the deck outputs are post-fader, otherwise you'll be
+fighting two controls for the same thing.
 
-Sin mixer externo, poné `Principal` en el SL2 canales 1-2. No mezcles el SL2
-con `default` (PipeWire): son dos relojes distintos y vas a juntar cortes.
+Without an external mixer, set `Main` to SL2 channels 1-2. Don't mix the SL2
+with `default` (PipeWire): they're two different clocks and you'll get
+dropouts.
 
-En **Control de vinilo**:
+Under **Vinyl Control**:
 
-- Tipo de vinilo: **Serato CV02 Vinyl**
-- Amplificación de señal: **0 dB**. Si necesitás subirla mucho, el problema
-  está en el conexionado, no acá.
-- `Control de vinilo 1` → canales 1-2, `Control de vinilo 2` → canales 3-4
+- Vinyl type: **Serato CV02 Vinyl**
+- Turntable input signal boost: **0 dB**. If you need to raise it a lot, the
+  problem is in the wiring, not here.
+- `Vinyl Control 1` → channels 1-2, `Vinyl Control 2` → channels 3-4
 
-## Diagnóstico
+## Diagnostics
 
-Si algo anda mal, cerrá Mixxx, dejá la púa apoyada con el disco girando y:
+If something's wrong, close Mixxx, leave the needle down with the record
+spinning and run:
 
 ```bash
 ./sl2-signal-check
 ```
 
-Mide nivel, recorte, frecuencia del tono de referencia y desfase entre
-canales, y dice qué ajustar. Una señal sana se ve así:
+It measures level, clipping, reference tone frequency and phase between
+channels, and tells you what to adjust. A healthy signal looks like this:
 
 ```
-Niveles
-  CH1: pico  -19.9 dBFS   rms  -24.7 dBFS
-  CH2: pico  -21.5 dBFS   rms  -26.5 dBFS
+Levels
+  CH1: peak  -19.9 dBFS   rms  -24.7 dBFS
+  CH2: peak  -21.5 dBFS   rms  -26.5 dBFS
 
-Tono de referencia  (Serato CV02 = 1000 Hz)
+Reference tone  (Serato CV02 = 1000 Hz)
   CH1:   998.6 Hz     CH2:   998.6 Hz
 
-Cuadratura  (los dos canales deben ir a 90 grados)
-  desfase CH1-CH2: +91.2 grados   correcto
+Quadrature  (both channels must be 90 degrees apart)
+  phase CH1-CH2: +91.2 degrees   correct
 ```
 
-## Síntomas y causas
+## Symptoms and causes
 
-Estos cuatro cubren casi todo, y son difíciles de distinguir a ojo:
+These cover almost everything, and they're hard to tell apart by eye:
 
-| Síntoma | Causa real |
+| Symptom | Actual cause |
 |---|---|
-| Círculo limpio pero el track no avanza | **Recorte.** El tono de referencia sobrevive a la saturación y sigue dibujando el círculo, pero el dato de posición va modulado en detalles finos de amplitud y se destruye. Bajá la ganancia. |
-| El track va en reversa | Canales invertidos, o señal tan pobre que el sentido no se resuelve. Antes de cruzar cables, revisá los switches PHONO. |
-| El track salta | Desfase de reloj. Si el tono de referencia lee ~1087 Hz en vez de 1000, el driver está declarando 48000 mientras el hardware corre a 44100: el módulo con el quirk no está activo. |
-| Solo zumbido grave, casi sin nivel | Tornamesa en LINE con el Rane en PHONO, o la púa levantada. |
-| Por la salida sale el timecode y no la música | El SL2 pasa la entrada a la salida mientras no tenga un stream de reproducción abierto: el ADC y el thru dependen de que el lado de salida esté corriendo. Si en Mixxx solo asignaste las entradas de control de vinilo y dejaste `Plato 1` y `Plato 2` sin asignar, el aparato nunca sale de ese modo. Asigná las salidas (canales 1-2 y 3-4) y revisá que el botón **PASS** del plato esté apagado. |
+| Clean circle but the track doesn't move | **Clipping.** The reference tone survives saturation and keeps drawing the circle, but the position data is modulated in fine amplitude details and gets destroyed. Lower the gain. |
+| The track plays in reverse | Swapped channels, or a signal so poor the direction can't be resolved. Before crossing cables, check the PHONO switches. |
+| The track skips | Clock mismatch. If the reference tone reads ~1087 Hz instead of 1000, the driver is declaring 48000 while the hardware runs at 44100: the module with the quirk isn't active. |
+| Only low rumble, almost no level | Turntable on LINE with the Rane on PHONO, or the needle lifted. |
+| The output carries the timecode instead of the music | The SL2 passes the input through to the output as long as no playback stream is open: the ADC and the thru depend on the output side running. If in Mixxx you only assigned the vinyl control inputs and left `Deck 1` and `Deck 2` unassigned, the device never leaves that mode. Assign the outputs (channels 1-2 and 3-4) and check that the deck's **PASS** button is off. |
 
-## Detalles técnicos
+## Technical details
 
-Descriptores del aparato:
+Device descriptors:
 
-| Interfaz | Clase | Endpoints | Rol |
+| Interface | Class | Endpoints | Role |
 |---|---|---|---|
-| 0 | `0xFF` sub 1 | ninguno | control (`SL 2 Audio`) |
-| 1 alt 1 | `0xFF` sub 2 | `0x06` OUT isoc, 112 B | reproducción |
-| 2 alt 1 | `0xFF` sub 2 | `0x82` IN isoc, 112 B | captura |
-| 3 | HID | `0x81` IN / `0x01` OUT interrupt | control y MIDI |
+| 0 | `0xFF` sub 1 | none | control (`SL 2 Audio`) |
+| 1 alt 1 | `0xFF` sub 2 | `0x06` OUT isoc, 112 B | playback |
+| 2 alt 1 | `0xFF` sub 2 | `0x82` IN isoc, 112 B | capture |
+| 3 | HID | `0x81` IN / `0x01` OUT interrupt | control and MIDI |
 
-Formato: 4 canales, 24 bits en subslots de 4 bytes, 44100 Hz fijo,
-`S32_LE` del lado de ALSA. El quirk usa `USB_DEVICE_VENDOR_SPEC` para hacer
-match solo con las interfaces `0xFF`, de modo que la interfaz HID queda con
-`usbhid` y no se la lleva el driver de audio.
+Format: 4 channels, 24 bits in 4-byte subslots, fixed 44100 Hz, `S32_LE` on
+the ALSA side. The quirk uses `USB_DEVICE_VENDOR_SPEC` to match only the
+`0xFF` interfaces, so the HID interface stays with `usbhid` and isn't claimed
+by the audio driver.
 
-Un detalle que sorprende al probar: **el ADC solo entrega datos con el stream
-de salida activo**, porque el endpoint de entrada es la fuente de feedback
-implícito del de salida. Si grabás con `arecord` solo, obtenés ceros digitales
-exactos. Hay que reproducir algo en paralelo — es lo que hace
-`sl2-signal-check`.
+A detail that surprises people when testing: **the ADC only delivers data
+while the output stream is active**, because the input endpoint is the
+implicit feedback source for the output one. If you record with `arecord`
+alone, you get exact digital zeros. You have to play something in parallel —
+which is what `sl2-signal-check` does.
 
-El PID `0x0014` es la variante que Serato Scratch Live reclama; `0x0013` es el
-modo ASIO genérico, que es el que este quirk soporta. Si tenés una unidad que
-se presenta como `0014`, abrí un issue: hace falta capturar sus descriptores.
+PID `0x0014` is the variant claimed by Serato Scratch Live; `0x0013` is the
+generic ASIO mode, which is the one this quirk supports. If you have a unit
+that shows up as `0014`, open an issue: its descriptors need to be captured.
 
-## Licencia
+## License
 
-El quirk se inserta en fuentes del kernel Linux y sigue su licencia,
-**GPL-2.0**. Los scripts de este repositorio, lo mismo.
+The quirk is inserted into Linux kernel sources and follows its license,
+**GPL-2.0**. The scripts in this repository, likewise.
 
-## Procedencia de los datos
+## Data provenance
 
-Todo lo que hay en el quirk sale de los **descriptores que el propio aparato
-publica** (`doc/lsusb-sl2.txt`, salida de `lsusb -v`) o de mediciones sobre la
-señal. La frecuencia de 44100 Hz, por ejemplo, se determinó midiendo: el tono
-de referencia de 1 kHz leía 1087 Hz al declarar 48000, y una captura
-cronometrada de 10 s tardaba 10.9 s de reloj real.
+Everything in the quirk comes from the **descriptors the device itself
+publishes** (`doc/lsusb-sl2.txt`, output of `lsusb -v`) or from measurements on
+the signal. The 44100 Hz rate, for example, was determined by measuring: the
+1 kHz reference tone read 1087 Hz when declaring 48000, and a timed 10 s
+capture took 10.9 s of wall-clock time.
 
-Los drivers de Windows y macOS de Rane se consultaron para entender la
-arquitectura del aparato — resultan ser envoltorios finos sobre los endpoints,
-con toda la lógica en espacio de usuario — pero **ningún valor del quirk
-proviene de desensamblarlos**, y esos binarios no se redistribuyen aquí porque
-son propietarios de Rane/inMusic y Serato.
+Rane's Windows and macOS drivers were consulted to understand the device's
+architecture — they turn out to be thin wrappers over the endpoints, with all
+the logic in user space — but **no value in the quirk comes from
+disassembling them**, and those binaries are not redistributed here because
+they're proprietary to Rane/inMusic and Serato.
 
-Si querés inspeccionarlos por tu cuenta, están dentro del instalador de
-**Serato Scratch Live 2.5** (descarga gratuita con cuenta gratuita en
-serato.com, en el archivo de versiones antiguas). Los drivers quedan en
-`Serato/Drivers/<SO>/SL2/`, y el paquete ASIO se abre con `innoextract`.
+If you want to inspect them yourself, they're inside the **Serato Scratch Live
+2.5** installer (free download with a free account at serato.com, in the
+legacy versions archive). The drivers end up in `Serato/Drivers/<OS>/SL2/`,
+and the ASIO package opens with `innoextract`.
 
-## Otros modelos de la familia
+## Other models in the family
 
-El **SL3** y el **SL4** son de la misma generación y muy probablemente tengan
-la misma estructura: interfaces vendor specific con descriptores UAC2 válidos
-y sin IAD. Adaptar el quirk sería cuestión de cambiar el PID y ajustar
-endpoints y número de canales.
+The **SL3** and **SL4** are from the same generation and very likely share the
+same structure: vendor specific interfaces with valid UAC2 descriptors and no
+IAD. Adapting the quirk would be a matter of changing the PID and adjusting
+endpoints and channel count.
 
-Si tenés uno, abrí un issue con la salida de `lsusb -v -d 1cc5:XXXX` y con el
-resultado de medir la frecuencia real. PIDs conocidos de la familia, sacados
-de los archivos INF de Serato:
+If you have one, open an issue with the output of `lsusb -v -d 1cc5:XXXX` and
+the result of measuring the actual sample rate. Known PIDs in the family, taken
+from Serato's INF files:
 
-| Modelo | USB ID |
+| Model | USB ID |
 |---|---|
 | Rane SL 1 | `13e5:0001` |
 | Rane MP 4 | `13e5:0002` |
@@ -334,13 +347,13 @@ de los archivos INF de Serato:
 | Rane Sixty Two | `1cc5:000a` |
 | Rane SL 4 | `1cc5:0010` |
 | Rane Sixty One | `1cc5:0012` |
-| **Rane SL 2 (modo ASIO)** | **`1cc5:0013`** |
-| Rane SL 2 (modo Scratch Live) | `1cc5:0014` |
+| **Rane SL 2 (ASIO mode)** | **`1cc5:0013`** |
+| Rane SL 2 (Scratch Live mode) | `1cc5:0014` |
 
-## Envío al kernel
+## Upstream submission
 
-En `patch/` está el mismo quirk en formato de parche para el kernel Linux,
-listo para mandar a la lista. Pasa `checkpatch.pl --strict` sin observaciones.
+`patch/` holds the same quirk as a Linux kernel patch, ready to send to the
+mailing list. It passes `checkpatch.pl --strict` with no remarks.
 
-Si termina aceptándose upstream, este repositorio deja de hacer falta: el
-soporte llega solo con el kernel de cualquier distribución.
+If it ends up accepted upstream, this repository is no longer needed: support
+ships with every distribution's kernel.

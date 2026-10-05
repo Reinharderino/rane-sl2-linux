@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Medir la calidad del timecode que entrega un Rane SL2 y decir que ajustar.
+"""Measure the quality of the timecode a Rane SL2 delivers and say what to fix.
 
-Graba unos segundos de las entradas del SL2 y reporta nivel, recorte,
-frecuencia del tono de referencia y desfase entre canales. Cada medicion
-apunta a una causa fisica concreta: nivel bajo suele ser el switch
-PHONO/LINE mal puesto, el recorte mata el dato de posicion aunque el
-circulo se vea bien, y una frecuencia corrida delata un problema de reloj.
+Records a few seconds of the SL2's inputs and reports level, clipping,
+reference tone frequency and phase between channels. Each measurement
+points to a concrete physical cause: low level is usually a misplaced
+PHONO/LINE switch, clipping kills the position data even when the circle
+looks fine, and a shifted frequency gives away a clock problem.
 
-Sin dependencias fuera de la stdlib y alsa-utils.
+No dependencies beyond the stdlib and alsa-utils.
 """
 import argparse
 import math
@@ -22,7 +22,7 @@ import wave
 
 RATE = 44100
 CHANNELS = 4
-SERATO_TONE = 1000.0        # tono de referencia del Serato CV02
+SERATO_TONE = 1000.0        # Serato CV02 reference tone
 FULL = 2 ** 31
 
 BOLD, RED, YEL, GRN, OFF = "\033[1m", "\033[31m", "\033[33m", "\033[32m", "\033[0m"
@@ -37,17 +37,17 @@ def die(msg):
 
 
 def find_card():
-    """Devolver el indice de tarjeta ALSA del SL2."""
+    """Return the SL2's ALSA card index."""
     try:
         text = open("/proc/asound/cards", encoding="utf-8").read()
     except OSError:
-        die("no pude leer /proc/asound/cards")
+        die("could not read /proc/asound/cards")
     for line in text.splitlines():
         m = re.match(r"\s*(\d+)\s+\[", line)
         if m and re.search(r"rane|SL ?2", line, re.I):
             return int(m.group(1))
-    die("no encontre el Rane SL2 entre las tarjetas de sonido.\n"
-        "  Conectalo ANTES de encender la maquina (ver README) y comproba con: cat /proc/asound/cards")
+    die("Rane SL2 not found among the sound cards.\n"
+        "  Connect it BEFORE turning on the machine (see README) and check with: cat /proc/asound/cards")
 
 
 def busy(card):
@@ -63,8 +63,8 @@ def busy(card):
 
 
 def capture(card, seconds):
-    """Grabar las 4 entradas. Hace falta reproducir en paralelo: el ADC del
-    SL2 solo entrega datos cuando el stream de salida esta activo."""
+    """Record the 4 inputs. Playback must run in parallel: the SL2's ADC
+    only delivers data while the output stream is active."""
     dev = f"hw:{card},0"
     tmp = tempfile.mkdtemp(prefix="sl2check-")
     wav, sil = os.path.join(tmp, "in.wav"), os.path.join(tmp, "sil.raw")
@@ -83,9 +83,9 @@ def capture(card, seconds):
         play.wait(timeout=5)
     if rec.returncode != 0:
         msg = rec.stderr.strip().splitlines()
-        detail = msg[0] if msg else "sin detalle"
-        die(f"arecord fallo: {detail}\n"
-            "  Si dice 'Unable to install hw params', el modulo con el quirk no esta activo.")
+        detail = msg[0] if msg else "no details"
+        die(f"arecord failed: {detail}\n"
+            "  If it says 'Unable to install hw params', the module with the quirk is not active.")
     with wave.open(wav) as w:
         n = w.getnframes()
         raw = w.readframes(n)
@@ -95,7 +95,7 @@ def capture(card, seconds):
 
 
 def goertzel(xs, freq, sr):
-    """Amplitud compleja a una frecuencia. Mas barato que una FFT completa."""
+    """Complex amplitude at one frequency. Cheaper than a full FFT."""
     w = 2 * math.pi * freq / sr
     cw, sw, coeff = math.cos(w), math.sin(w), 2 * math.cos(w)
     s1 = s2 = 0.0
@@ -105,7 +105,7 @@ def goertzel(xs, freq, sr):
 
 
 def dominant(xs, sr, lo=700.0, hi=1400.0):
-    """Barrido grueso y refinado, para pillar tambien un tono corrido."""
+    """Coarse then fine sweep, to also catch a shifted tone."""
     seg = xs[:8192]
     best_f, best_m = lo, -1.0
     f = lo
@@ -132,95 +132,95 @@ def fmt(x):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Diagnostico de timecode del Rane SL2")
-    ap.add_argument("-d", "--seconds", type=int, default=3, help="segundos a grabar (por defecto 3)")
-    ap.add_argument("-c", "--card", type=int, help="indice de tarjeta ALSA (por defecto: autodetectar)")
+    ap = argparse.ArgumentParser(description="Rane SL2 timecode diagnostics")
+    ap.add_argument("-d", "--seconds", type=int, default=3, help="seconds to record (default 3)")
+    ap.add_argument("-c", "--card", type=int, help="ALSA card index (default: autodetect)")
     args = ap.parse_args()
 
     for t in ("arecord", "aplay"):
         if not shutil.which(t):
-            die(f"falta '{t}'. Instala alsa-utils.")
+            die(f"'{t}' is missing. Install alsa-utils.")
 
     card = args.card if args.card is not None else find_card()
-    print(f"{BOLD}Rane SL2 en la tarjeta {card}{OFF}")
+    print(f"{BOLD}Rane SL2 on card {card}{OFF}")
     if busy(card):
-        die("el dispositivo esta en uso. Cerra Mixxx (u otro programa de audio) y volve a probar.")
+        die("the device is in use. Close Mixxx (or any other audio program) and try again.")
 
-    print(f"Grabando {args.seconds} s. Deja la pua apoyada y el disco girando...\n")
+    print(f"Recording {args.seconds} s. Keep the needle down and the record spinning...\n")
     ch = capture(card, args.seconds)
 
     problems, notes = [], []
 
-    print(f"{BOLD}Niveles{OFF}")
+    print(f"{BOLD}Levels{OFF}")
     stats = []
     for i, xs in enumerate(ch):
         pk = max(abs(v) for v in xs) / FULL
         rms = math.sqrt(sum(float(v) * v for v in xs) / len(xs)) / FULL
         clipped = sum(1 for v in xs if abs(v) > 0.995 * FULL)
         stats.append((pk, rms, clipped))
-        tag = f"{RED}  RECORTA ({clipped} muestras){OFF}" if clipped else ""
-        print(f"  CH{i+1}: pico {fmt(db(pk))} dBFS   rms {fmt(db(rms))} dBFS{tag}")
+        tag = f"{RED}  CLIPPING ({clipped} samples){OFF}" if clipped else ""
+        print(f"  CH{i+1}: peak {fmt(db(pk))} dBFS   rms {fmt(db(rms))} dBFS{tag}")
 
     pk1, rms1, clip1 = stats[0]
     pk2, rms2, clip2 = stats[1]
 
     if clip1 or clip2:
         problems.append(
-            "La senal RECORTA. El tono de referencia sobrevive y el circulo se ve bien,\n"
-            "     pero el dato de posicion se destruye y el track no avanza.\n"
-            "     Baja la amplificacion de vinilo de Mixxx a 0 dB, y revisa que la\n"
-            "     tornamesa no este en LINE con el Rane en PHONO (dos previos sumados).")
+            "The signal is CLIPPING. The reference tone survives and the circle looks fine,\n"
+            "     but the position data is destroyed and the track doesn't move.\n"
+            "     Lower Mixxx's turntable input signal boost to 0 dB, and check that the\n"
+            "     turntable isn't on LINE with the Rane on PHONO (two preamps stacked).")
     elif db(pk1) < -45:
         problems.append(
-            "Nivel demasiado bajo. Lo tipico es la tornamesa en LINE con el Rane en\n"
-            "     PHONO, o al reves, o la pua levantada. Ambos switches en PHONO.")
+            "Level too low. Typically the turntable is on LINE with the Rane on\n"
+            "     PHONO, or the other way around, or the needle is lifted. Set both switches to PHONO.")
 
     if db(max(stats[2][1], stats[3][1])) > -40:
-        notes.append("Los canales 3-4 traen senal: hay una segunda bandeja conectada.")
+        notes.append("Channels 3-4 carry signal: a second turntable is connected.")
 
-    print(f"\n{BOLD}Tono de referencia{OFF}  (Serato CV02 = 1000 Hz)")
+    print(f"\n{BOLD}Reference tone{OFF}  (Serato CV02 = 1000 Hz)")
     f1, m1 = dominant(ch[0], RATE)
     f2, m2 = dominant(ch[1], RATE)
     print(f"  CH1: {f1:7.1f} Hz     CH2: {f2:7.1f} Hz")
 
     if m1 / FULL < 1e-5:
         problems.append(
-            "No hay tono de timecode. Pua levantada, plato parado, o el disco no es\n"
-            "     de timecode Serato.")
+            "No timecode tone. Needle lifted, platter stopped, or the record isn't\n"
+            "     Serato timecode.")
     else:
         off = (f1 / SERATO_TONE - 1) * 100
         if abs(off) > 3:
             problems.append(
-                f"El tono esta {off:+.1f}% corrido respecto a 1000 Hz.\n"
-                f"     Un desvio cercano a +8.8% significa que el driver declara 48000 Hz\n"
-                f"     mientras el hardware corre a 44100: el modulo con el quirk no esta\n"
-                f"     activo. Revisa 'dkms status' y recarga snd_usb_audio.")
+                f"The tone is {off:+.1f}% off from 1000 Hz.\n"
+                f"     A deviation close to +8.8% means the driver declares 48000 Hz\n"
+                f"     while the hardware runs at 44100: the module with the quirk is not\n"
+                f"     active. Check 'dkms status' and reload snd_usb_audio.")
         else:
-            notes.append(f"Frecuencia correcta, desvio {off:+.2f}% (la precision de tu bandeja).")
+            notes.append(f"Frequency correct, deviation {off:+.2f}% (your turntable's accuracy).")
 
-    print(f"\n{BOLD}Cuadratura{OFF}  (los dos canales deben ir a 90 grados)")
+    print(f"\n{BOLD}Quadrature{OFF}  (both channels must be 90 degrees apart)")
     g1, g2 = goertzel(ch[0][:8192], f1, RATE), goertzel(ch[1][:8192], f1, RATE)
     if abs(g1) / FULL < 1e-5 or abs(g2) / FULL < 1e-5:
-        print("  no medible: falta senal en algun canal")
-        problems.append("Uno de los dos canales no trae senal. Revisa el cable RCA de esa bandeja.")
+        print("  not measurable: a channel has no signal")
+        problems.append("One of the two channels has no signal. Check that turntable's RCA cable.")
     else:
         d = math.degrees(math.atan2((g2 / g1).imag, (g2 / g1).real))
         ok = 60 < abs(d) < 120
         col = GRN if ok else RED
-        print(f"  desfase CH1-CH2: {col}{d:+.1f} grados{OFF}   "
-              f"{'correcto' if ok else 'FUERA DE CUADRATURA'}")
+        print(f"  phase CH1-CH2: {col}{d:+.1f} degrees{OFF}   "
+              f"{'correct' if ok else 'OUT OF QUADRATURE'}")
         if not ok:
             problems.append(
-                "Sin cuadratura. Los dos canales llevan casi lo mismo: probablemente un\n"
-                "     RCA flojo o mal puesto, o una entrada en mono.")
+                "No quadrature. Both channels carry nearly the same thing: probably a\n"
+                "     loose or misplaced RCA, or a mono input.")
 
     print()
     if problems:
-        print(f"{BOLD}{RED}Hay que corregir{OFF}")
+        print(f"{BOLD}{RED}Needs fixing{OFF}")
         for p in problems:
             print(f"  {RED}*{OFF} {p}")
     else:
-        print(f"{BOLD}{GRN}Senal sana.{OFF} Nivel, frecuencia y cuadratura correctos.")
+        print(f"{BOLD}{GRN}Healthy signal.{OFF} Level, frequency and quadrature are correct.")
     for n in notes:
         print(f"  {YEL}-{OFF} {n}")
     return 1 if problems else 0

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Forzar la enumeracion de un Rane SL2 conectado en caliente.
+# Force enumeration of a hot-plugged Rane SL2.
 #
-# El SL2 tarda mas en despertar que lo que el host espera antes de rendirse,
-# asi que enchufarlo con la maquina ya encendida falla siempre con error -110.
-# Un reinicio del puerto, con el aparato ya despierto, lo enumera a la primera.
+# The SL2 takes longer to wake up than the host waits before giving up, so
+# plugging it in with the machine already running always fails with error -110.
+# A port reset, once the device is awake, enumerates it on the first try.
 #
-# Uso: enchufar el SL2, esperar unos diez segundos, y correr esto como root.
-# El puerto se deduce del dmesg; si hace falta se pasa a mano (ej: 1-6).
+# Usage: plug in the SL2, wait about ten seconds, and run this as root.
+# The port is taken from dmesg; if needed, pass it by hand (e.g. 1-6).
 set -euo pipefail
 
 VID_PID="1cc5:0013"
@@ -14,60 +14,60 @@ PORT="${1-}"
 
 die() { echo "error: $*" >&2; exit 1; }
 
-[[ $EUID -eq 0 ]] || die "correlo como root (sudo ./sl2-hotplug-reset)"
+[[ $EUID -eq 0 ]] || die "run it as root (sudo ./sl2-hotplug-reset)"
 
 if lsusb | grep -qi "$VID_PID"; then
-    echo "El SL2 ya esta enumerado, no hay nada que hacer."
+    echo "The SL2 is already enumerated, nothing to do."
     exit 0
 fi
 
 if [[ -z $PORT ]]; then
-    # La linea de fallo del kernel nombra el puerto:
+    # The kernel's failure line names the port:
     #   [  365.123456] usb 1-6: device descriptor read/64, error -110
     LINE=$(dmesg | grep -E 'usb [0-9]+-[0-9]+: device descriptor read' | tail -1 || true)
-    [[ -n $LINE ]] || die "no encontre ningun fallo de enumeracion en dmesg.
-Enchufa el SL2, espera unos segundos, y volve a correrlo.
-Si el puerto ya lo sabes, pasalo como argumento: $0 1-6"
+    [[ -n $LINE ]] || die "found no enumeration failure in dmesg.
+Plug in the SL2, wait a few seconds, and run it again.
+If you already know the port, pass it as an argument: $0 1-6"
 
-    # Un fallo viejo, o de otro aparato, mandaria a reiniciar el puerto
-    # equivocado. Solo aceptamos los de los ultimos dos minutos.
+    # An old failure, or one from another device, would reset the wrong
+    # port. Only failures from the last two minutes are accepted.
     TS=$(printf '%s' "$LINE" | sed -n 's/^\[ *\([0-9]*\)\..*/\1/p')
     if [[ -n $TS ]]; then
         NOW=$(cut -d. -f1 /proc/uptime)
-        (( NOW - TS < 120 )) || die "el ultimo fallo de enumeracion es de hace \
-$(( (NOW - TS) / 60 )) minutos, no parece ser el tuyo.
-Enchufa el SL2, espera unos segundos, y volve a correrlo.
-Si el puerto ya lo sabes, pasalo como argumento: $0 1-6"
+        (( NOW - TS < 120 )) || die "the last enumeration failure is \
+$(( (NOW - TS) / 60 )) minutes old, it doesn't look like yours.
+Plug in the SL2, wait a few seconds, and run it again.
+If you already know the port, pass it as an argument: $0 1-6"
     fi
 
     PORT=$(printf '%s' "$LINE" | grep -oE 'usb [0-9]+-[0-9]+' | grep -oE '[0-9]+-[0-9]+')
-    echo "Puerto deducido del dmesg: $PORT"
+    echo "Port taken from dmesg: $PORT"
 fi
 
 BUS="${PORT%%-*}"
 NUM="${PORT##*-}"
 P="/sys/bus/usb/devices/usb$BUS/$BUS-0:1.0/usb$BUS-port$NUM"
 
-[[ -w "$P/disable" ]] || die "no existe $P/disable
-El puerto $PORT no cuelga directo del hub raiz, o el kernel no expone el
-control de puertos. Buscalo a mano bajo /sys/bus/usb/devices/."
+[[ -w "$P/disable" ]] || die "$P/disable does not exist
+Port $PORT does not hang directly off the root hub, or the kernel does not
+expose port control. Look for it by hand under /sys/bus/usb/devices/."
 
-echo "Reiniciando el puerto $PORT ..."
+echo "Resetting port $PORT ..."
 echo 1 > "$P/disable"
 sleep 1
 echo 0 > "$P/disable"
 
-# La enumeracion no es instantanea: dar unos segundos antes de dar el veredicto.
+# Enumeration isn't instant: give it a few seconds before the verdict.
 for _ in $(seq 10); do
     sleep 0.5
     if lsusb | grep -qi "$VID_PID"; then
         echo
-        echo "Listo, el SL2 enumero:"
+        echo "Done, the SL2 enumerated:"
         lsusb | grep -i "$VID_PID"
         exit 0
     fi
 done
 
-die "el puerto se reinicio pero el SL2 no aparecio.
-Proba esperar mas tiempo despues de enchufarlo antes de correr esto, o
-conectalo con la maquina apagada y encendela despues."
+die "the port was reset but the SL2 did not show up.
+Try waiting longer after plugging it in before running this, or
+connect it with the machine off and turn it on afterwards."

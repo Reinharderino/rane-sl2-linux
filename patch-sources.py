@@ -96,50 +96,50 @@ def fail(msg):
 def insert_before(path, anchor, block, what):
     text = path.read_text(encoding="utf-8")
     if VID_PID in text:
-        print(f"  {path.name}: ya contiene la entrada, sin cambios")
+        print(f"  {path.name}: already contains the entry, unchanged")
         return
     lines = text.split("\n")
     hits = [i for i, l in enumerate(lines) if l.startswith(anchor)]
     if not hits:
-        fail(f"no se encontro el ancla {anchor!r} en {path}. "
-             "Puede que la estructura del kernel haya cambiado.")
-    # El bloque ya termina en salto de linea; agregar otro dejaria dos
-    # lineas en blanco seguidas y checkpatch lo marca.
+        fail(f"anchor {anchor!r} not found in {path}. "
+             "The kernel's structure may have changed.")
+    # The block already ends in a newline; adding another would leave two
+    # consecutive blank lines, which checkpatch flags.
     lines[hits[0]:hits[0]] = block.split("\n")
     path.write_text("\n".join(lines), encoding="utf-8")
-    print(f"  {path.name}: {what} insertado")
+    print(f"  {path.name}: {what} inserted")
 
 
 def insert_after(path, anchor, block, what):
     text = path.read_text(encoding="utf-8")
     if VID_PID in text:
-        print(f"  {path.name}: ya contiene la entrada, sin cambios")
+        print(f"  {path.name}: already contains the entry, unchanged")
         return
     idx = text.find(anchor)
     if idx < 0:
-        fail(f"no se encontro el ancla {anchor!r} en {path}. "
-             "Puede que la estructura del kernel haya cambiado.")
+        fail(f"anchor {anchor!r} not found in {path}. "
+             "The kernel's structure may have changed.")
     cut = idx + len(anchor)
     path.write_text(text[:cut] + "\n" + block.rstrip("\n") + text[cut:],
                     encoding="utf-8")
-    print(f"  {path.name}: {what} insertado")
+    print(f"  {path.name}: {what} inserted")
 
 
 def main():
     if len(sys.argv) != 2:
-        print(f"uso: {sys.argv[0]} <directorio-con-sound-usb>", file=sys.stderr)
+        print(f"usage: {sys.argv[0]} <sound-usb-directory>", file=sys.stderr)
         sys.exit(2)
     d = pathlib.Path(sys.argv[1])
     qt, qc = d / "quirks-table.h", d / "quirks.c"
     for f in (qt, qc):
         if not f.is_file():
-            fail(f"falta {f}")
+            fail(f"missing {f}")
 
-    # El #undef cierra la tabla; ha estado ahi durante muchas versiones.
+    # The #undef closes the table; it has been there for many versions.
     insert_before(qt, "#undef USB_DEVICE_VENDOR_SPEC", QUIRK_ENTRY,
-                  "entrada de quirk")
-    # La tabla de flags se recorre linealmente y devuelve al primer match,
-    # asi que insertar al principio es seguro y no depende del orden por vendor.
+                  "quirk entry")
+    # The flags table is walked linearly and returns on the first match,
+    # so inserting at the top is safe and doesn't depend on vendor ordering.
     insert_after(qc, "static const struct usb_audio_quirk_flags_table quirk_flags_table[] = {",
                  FLAG_ENTRY, "QUIRK_FLAG_FIXED_RATE")
 
